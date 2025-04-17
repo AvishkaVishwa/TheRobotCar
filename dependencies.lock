@@ -1,0 +1,32 @@
+dependencies:
+  espressif/servo:
+    component_hash: 309c787e48224255fad458cfd9ab86ea53f0fdad1c5e4f6f0c50309990b17108
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.4'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 0.1.0
+  idf:
+    source:
+      type: idf
+    version: 5.4.0
+  vgerwen/hcsr04:
+    component_hash: 75b038cef861a7f766742ccc5471ee38dd4be476bcc5c66514b0effb50f15623
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.4.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.0.0
+direct_dependencies:
+- espressif/servo
+- idf
+- vgerwen/hcsr04
+manifest_hash: 43baf83325613947e92064097eac698ba9e742340885e91ccda0af5bd3680d77
+target: esp32
+version: 2.0.0

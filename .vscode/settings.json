@@ -3,7 +3,7 @@
     "idf.espIdfPathWin": "c:\\Espressif\\frameworks\\esp-idf-v5.4",
     "idf.pythonInstallPath": "C:\\Users\\micro\\.espressif\\tools\\idf-python\\3.11.2\\python.exe",
     "idf.openOcdConfigs": [
-        "board/esp32s3-builtin.cfg"
+        "board/esp32-wrover-kit-3.3v.cfg"
     ],
     "idf.portWin": "COM3",
     "idf.toolsPathWin": "C:\\Users\\micro\\.espressif",
@@ -14,6 +14,6 @@
         "span": "c"
     },
     "idf.customExtraVars": {
-        "IDF_TARGET": "esp32s3"
+        "IDF_TARGET": "esp32"
     }
 }
