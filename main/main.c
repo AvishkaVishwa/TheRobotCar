@@ -35,7 +35,7 @@
 #define MAX_MOTOR_SPEED 255
 #define MAX_LEDC_DUTY 8191
 #define OBSTACLE_THRESHOLD 15 // Distance threshold in cm
-#define IR_THRESHOLD 1500     // Adjust! Assuming LOWER means BLACK.
+#define IR_THRESHOLD 800     // Adjust! Assuming LOWER means BLACK.
 #define I2C_MASTER_NUM I2C_NUM_0
 #define I2C_MASTER_FREQ_HZ 100000
 #define I2C_TIMEOUT_MS 1000
@@ -44,8 +44,8 @@
 #define MPU6050_ACCEL_XOUT_H 0x3B
 #define MPU6050_GYRO_XOUT_H 0x43
 #define MPU6050_WHO_AM_I 0x75
-float Kp = 30.0; // !! MUST RE-TUNE for speed 55 !!
-float Kd = 20.0; // !! MUST RE-TUNE for speed 55 !!
+float Kp = 20.0; // !! MUST RE-TUNE for speed 55 !!
+float Kd = 10.0; // !! MUST RE-TUNE for speed 55 !!
 
 // --- Global Variables ---
 //int distance_L, distance_R; // These are now local to check_side_for_escape
