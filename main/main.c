@@ -36,7 +36,7 @@
 #define MOTOR_BASE_SPEED 55 // Base speed set to 55
 #define MAX_MOTOR_SPEED 255
 #define MAX_LEDC_DUTY 8191
-#define OBSTACLE_THRESHOLD 20 // Distance threshold in cm
+#define OBSTACLE_THRESHOLD 10 // Distance threshold in cm
 #define IR_THRESHOLD 800     // Adjust! Assuming LOWER means BLACK.
 #define I2C_MASTER_NUM I2C_NUM_0
 #define I2C_MASTER_FREQ_HZ 100000
@@ -47,13 +47,13 @@
 #define MPU6050_GYRO_XOUT_H 0x43
 #define MPU6050_WHO_AM_I 0x75
 // --- Constants for curved path obstacle avoidance ---
-#define CURVE_TURN_SPEED_DIFF 15       // Speed difference between wheels during curved turn (CALIBRATE!)
+#define CURVE_TURN_SPEED_DIFF 30       // Speed difference between wheels during curved turn (CALIBRATE!)
 #define MIN_WHEEL_SPEED 25             // Minimum speed to keep wheel moving
-#define OBSTACLE_SIDE_CLEARANCE 30     // Side clearance in cm to maintain during curved path (CALIBRATE!)
-#define ARC_DURATION_MS 2000           // Initial arc duration in milliseconds (CALIBRATE!)
+#define OBSTACLE_SIDE_CLEARANCE 50     // Side clearance in cm to maintain during curved path (CALIBRATE!)
+#define ARC_DURATION_MS 1500           // Initial arc duration in milliseconds (CALIBRATE!)
 
-float Kp = 10.0; // !! MUST RE-TUNE for speed 55 !!
-float Kd = 5.0; // !! MUST RE-TUNE for speed 55 !!
+float Kp = 12.0; // !! MUST RE-TUNE for speed 55 !!
+float Kd = 7.0; // !! MUST RE-TUNE for speed 55 !!
 
 // --- Global Variables ---
 float distance_F; // Keep front distance global
