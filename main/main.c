@@ -50,8 +50,8 @@
 #define OBSTACLE_SIDE_CLEARANCE 30     // Side clearance in cm to maintain during curved path (CALIBRATE!)
 #define ARC_DURATION_MS 5000       // Initial arc duration in milliseconds (CALIBRATE!)
 
-float Kp = 10.0; // !! MUST RE-TUNE for speed 55 !!
-float Kd = 5.0; // !! MUST RE-TUNE for speed 55 !!
+float Kp = 8.0; // !! MUST RE-TUNE for speed 55 !!
+float Kd = 4.0; // !! MUST RE-TUNE for speed 55 !!
 
 // --- Global Variables ---
 float distance_F; // Keep front distance global
