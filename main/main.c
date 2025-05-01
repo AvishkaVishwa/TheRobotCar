@@ -34,7 +34,7 @@
 #define MOTOR_BASE_SPEED 55 // Base speed set to 55
 #define MAX_MOTOR_SPEED 255
 #define MAX_LEDC_DUTY 8191
-#define OBSTACLE_THRESHOLD 10//Distance threshold in cm
+#define OBSTACLE_THRESHOLD 20 // Increased threshold (e.g., to 20cm) - CALIBRATE!
 #define IR_THRESHOLD 800     // Adjust! Assuming LOWER means BLACK.
 #define I2C_MASTER_NUM I2C_NUM_0
 #define I2C_MASTER_FREQ_HZ 100000
@@ -44,14 +44,16 @@
 #define MPU6050_ACCEL_XOUT_H 0x3B
 #define MPU6050_GYRO_XOUT_H 0x43
 #define MPU6050_WHO_AM_I 0x75
-// --- Constants for curved path obstacle avoidance ---
-#define CURVE_TURN_SPEED_DIFF 20   // Speed difference between wheels during curved turn (CALIBRATE!)
-#define MIN_WHEEL_SPEED 25             // Minimum speed to keep wheel moving
-#define OBSTACLE_SIDE_CLEARANCE 30     // Side clearance in cm to maintain during curved path (CALIBRATE!)
-#define ARC_DURATION_MS 5000       // Initial arc duration in milliseconds (CALIBRATE!)
 
-float Kp = 8.0; // !! MUST RE-TUNE for speed 55 !!
-float Kd = 4.0; // !! MUST RE-TUNE for speed 55 !!
+// --- Constants for Half-Square Obstacle Avoidance ---
+#define SQUARE_TURN_SPEED 60         // Speed for 90-degree turns (CALIBRATE!)
+#define SQUARE_TURN_DURATION_MS 750  // Duration for 90-degree turn (CALIBRATE!)
+#define SQUARE_FORWARD_DURATION_MS 1800 // Duration to move forward past obstacle (CALIBRATE! Consider robot length 20cm + margin)
+#define SQUARE_SEARCH_TURN_SPEED 45  // Slower speed for turning during search (CALIBRATE!)
+#define SQUARE_SEARCH_TIMEOUT_MS 3000 // Max time to search for line by turning
+
+float Kp = 15.0; // Reduced Kp STARTING VALUE for re-tuning at speed 55. Adjust based on observation.
+float Kd = 7.0; // !! MUST RE-TUNE for speed 55 !!
 
 // --- Global Variables ---
 float distance_F; // Keep front distance global
@@ -79,7 +81,9 @@ void motor_turn_right(int speed);
 void motor_turn_left(int speed);
 void motor_stop();
 int check_side_for_escape(); // Scan function
-void avoid_obstacle(); // New curved path obstacle avoidance function
+// void avoid_obstacle(); // Comment out or remove old prototype
+// void avoid_obstacle_simple_turn(); // Comment out or remove old prototype
+void avoid_obstacle_half_square(); // Add new prototype
 
 // --- Initialization Functions ---
 void init_gpio() {
@@ -249,165 +253,97 @@ int check_side_for_escape() {
     }
 }
 
-// New curved path obstacle avoidance implementation
-void avoid_obstacle() {
-    ESP_LOGI(TAG, "Obstacle Detected! Distance: %.1f cm. Starting curved avoidance.", distance_F);
+// Half-Square Obstacle Avoidance Implementation
+void avoid_obstacle_half_square() {
+    ESP_LOGI(TAG, "Obstacle Detected! Distance: %.1f cm. Starting half-square avoidance.", distance_F);
     error = 0; previous_error = 0; // Reset PD error
     motor_stop();
-    
+    vTaskDelay(pdMS_TO_TICKS(200)); // Pause briefly
+
     // Step 1: Scan both sides and select best direction
-    int escape_direction = check_side_for_escape();
-    float front_distance;
-    
-    // Step 2: Begin curved path (arc) around obstacle
-    ESP_LOGI(TAG, "Avoidance: Starting curved path to the %s", escape_direction == 1 ? "Left" : "Right");
-    
-    // Point servo slightly forward to continuously check for obstacles
-    int forward_scan_angle = 90;
-    servo_write(forward_scan_angle);
+    int escape_direction = check_side_for_escape(); // 1 for Left, -1 for Right
+
+    // Step 2: Turn 90 degrees away from the obstacle
+    ESP_LOGI(TAG, "Avoidance: Turning 90deg %s", escape_direction == 1 ? "Left" : "Right");
+    if (escape_direction == 1) { // Turn Left
+        motor_turn_left(SQUARE_TURN_SPEED);
+    } else { // Turn Right
+        motor_turn_right(SQUARE_TURN_SPEED);
+    }
+    vTaskDelay(pdMS_TO_TICKS(SQUARE_TURN_DURATION_MS)); // Turn for calibrated duration
+    motor_stop();
     vTaskDelay(pdMS_TO_TICKS(100));
-    
-    // Calculate wheel speeds for curved motion
-    int inside_wheel_speed = MOTOR_BASE_SPEED - CURVE_TURN_SPEED_DIFF;
-    int outside_wheel_speed = MOTOR_BASE_SPEED + CURVE_TURN_SPEED_DIFF;
-    
-    // Ensure minimum wheel speed
-    if (inside_wheel_speed < MIN_WHEEL_SPEED) inside_wheel_speed = MIN_WHEEL_SPEED;
-    
-    // Apply differential drive for curved motion
-    if (escape_direction == 1) { // Left curve
-        ESP_LOGI(TAG, "Curving Left: Left wheel=%d, Right wheel=%d", inside_wheel_speed, outside_wheel_speed);
-        motor_control(inside_wheel_speed, true, outside_wheel_speed, true);
-    } else { // Right curve
-        ESP_LOGI(TAG, "Curving Right: Left wheel=%d, Right wheel=%d", outside_wheel_speed, inside_wheel_speed);
-        motor_control(outside_wheel_speed, true, inside_wheel_speed, true);
+
+    // Step 3: Move forward to clear the obstacle's side
+    ESP_LOGI(TAG, "Avoidance: Moving forward past obstacle");
+    motor_forward(MOTOR_BASE_SPEED);
+    vTaskDelay(pdMS_TO_TICKS(SQUARE_FORWARD_DURATION_MS)); // Move forward for calibrated duration
+    motor_stop();
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    // Step 4: Turn 90 degrees back towards the original path direction
+    ESP_LOGI(TAG, "Avoidance: Turning 90deg back (%s)", escape_direction == 1 ? "Right" : "Left");
+    if (escape_direction == 1) { // Turn Right (opposite of initial turn)
+        motor_turn_right(SQUARE_TURN_SPEED);
+    } else { // Turn Left (opposite of initial turn)
+        motor_turn_left(SQUARE_TURN_SPEED);
     }
-    
-    // Step 3: Continue curving until obstacle is cleared
-    // First, do initial curve for minimum duration to get past the front of the obstacle
-    int64_t curve_start_time = esp_timer_get_time();
-    bool obstacle_cleared = false;
-    
-    // Initial curve to get past front of obstacle
-    while (esp_timer_get_time() - curve_start_time < ARC_DURATION_MS * 1000) {
-        // Check front for obstacles
-        front_distance = measure_distance();
-        
-        // If distance increases significantly, we're getting around the obstacle
-        if (front_distance > OBSTACLE_THRESHOLD * 2) {
-            ESP_LOGI(TAG, "Front distance increasing: %.1f cm", front_distance);
-            obstacle_cleared = true;
-            break;
-        }
-        
-        vTaskDelay(pdMS_TO_TICKS(50));
+    vTaskDelay(pdMS_TO_TICKS(SQUARE_TURN_DURATION_MS)); // Turn for calibrated duration
+    motor_stop();
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    // Step 5: Turn towards the expected line direction and search
+    ESP_LOGI(TAG, "Avoidance: Turning towards line (%s) and searching", escape_direction == 1 ? "Right" : "Left");
+    if (escape_direction == 1) { // Line should be to the Right, so turn Right
+        motor_turn_right(SQUARE_SEARCH_TURN_SPEED);
+    } else { // Line should be to the Left, so turn Left
+        motor_turn_left(SQUARE_SEARCH_TURN_SPEED);
     }
-    
-    // Continue curving and checking sides until we can turn back toward the line
-    // Note: Now scan to the side opposite our turn direction to detect when we've cleared the obstacle
-    int side_scan_angle = (escape_direction == 1) ? 20 : 160; // Scan angle to check for obstacle clearance
-    servo_write(side_scan_angle);
-    vTaskDelay(pdMS_TO_TICKS(200));
-    
-    // Continue the curve while monitoring the obstacle side
-    curve_start_time = esp_timer_get_time();
-    int search_timeout_ms = 3000; // Maximum 3 seconds for the full curve
-    
-    while (esp_timer_get_time() - curve_start_time < search_timeout_ms * 1000) {
-        // Measure side distance to check if we've cleared the obstacle
-        float side_distance = measure_distance();
-        
-        // If we detect sufficient clearance, start the return curve
-        if (side_distance > OBSTACLE_SIDE_CLEARANCE) {
-            ESP_LOGI(TAG, "Obstacle side clearance detected: %.1f cm", side_distance);
-            obstacle_cleared = true;
-            break;
-        }
-        
-        // Check for new obstacles in front
-        servo_write(forward_scan_angle);
-        vTaskDelay(pdMS_TO_TICKS(100));
-        front_distance = measure_distance();
-        
-        if (front_distance < OBSTACLE_THRESHOLD && front_distance > 0.1) {
-            ESP_LOGW(TAG, "New obstacle detected during curved avoidance: %.1f cm", front_distance);
-            break;
-        }
-        
-        // Return to side scanning
-        servo_write(side_scan_angle);
-        vTaskDelay(pdMS_TO_TICKS(100));
-    }
-    
-    // Step 4: Once obstacle is cleared, curve back toward the line
-    ESP_LOGI(TAG, "Obstacle cleared, curving back to find line");
-    servo_write(90); // Center servo
-    
-    // Reverse wheel speeds to curve in opposite direction
-    if (escape_direction == 1) { // Right curve to come back
-        ESP_LOGI(TAG, "Return curve: Right");
-        motor_control(outside_wheel_speed, true, inside_wheel_speed, true);
-    } else { // Left curve to come back
-        ESP_LOGI(TAG, "Return curve: Left");
-        motor_control(inside_wheel_speed, true, outside_wheel_speed, true);
-    }
-    
-    // Look for line while curving back
-    int line_search_start = esp_timer_get_time();
+
+    int64_t search_start_time = esp_timer_get_time();
     bool line_found = false;
-    
-    while (esp_timer_get_time() - line_search_start < 2000000) { // 2 seconds max
-        // Check IR sensors for line
+
+    while (esp_timer_get_time() - search_start_time < SQUARE_SEARCH_TIMEOUT_MS * 1000) {
         int ir_L = read_ir_sensor(LEFT_IR_CHANNEL);
         int ir_M = read_ir_sensor(MIDDLE_IR_CHANNEL);
         int ir_R = read_ir_sensor(RIGHT_IR_CHANNEL);
-        
-        // If any sensor detects line, exit search
+
+        // If any sensor detects the line, stop searching
         if (ir_L == 1 || ir_M == 1 || ir_R == 1) {
-            ESP_LOGI(TAG, "Line found! IR: %d%d%d", ir_L, ir_M, ir_R);
+            ESP_LOGI(TAG, "Line found during search turn! IR: %d%d%d", ir_L, ir_M, ir_R);
             line_found = true;
             break;
         }
-        
-        // Check front for obstacles
-        front_distance = measure_distance();
-        if (front_distance < OBSTACLE_THRESHOLD && front_distance > 0.1) {
-            ESP_LOGW(TAG, "New obstacle during return curve: %.1f cm", front_distance);
-            break;
+
+        // Optional: Check for new obstacles while searching
+        // Centering servo temporarily to check front
+        servo_write(90);
+        vTaskDelay(pdMS_TO_TICKS(50)); // Allow servo to move slightly
+        float current_distance = measure_distance();
+        if (current_distance < OBSTACLE_THRESHOLD && current_distance > 0.1) {
+             ESP_LOGW(TAG, "New obstacle detected during line search: %.1f cm. Stopping search.", current_distance);
+             break; // Exit search, main loop will handle the new obstacle
         }
-        
-        vTaskDelay(pdMS_TO_TICKS(50));
+
+        vTaskDelay(pdMS_TO_TICKS(50)); // Small delay during search turn
     }
-    
-    // If line not found, just go straight as a fallback
+
     if (!line_found) {
-        ESP_LOGW(TAG, "Line not found during return curve, moving forward to search");
-        motor_forward(MOTOR_BASE_SPEED);
-        
-        line_search_start = esp_timer_get_time();
-        while (esp_timer_get_time() - line_search_start < 1000000) { // 1 second max straight search
-            // Check IR sensors for line
-            int ir_L = read_ir_sensor(LEFT_IR_CHANNEL);
-            int ir_M = read_ir_sensor(MIDDLE_IR_CHANNEL);
-            int ir_R = read_ir_sensor(RIGHT_IR_CHANNEL);
-            
-            // If any sensor detects line, exit search
-            if (ir_L == 1 || ir_M == 1 || ir_R == 1) {
-                ESP_LOGI(TAG, "Line found during forward search! IR: %d%d%d", ir_L, ir_M, ir_R);
-                break;
-            }
-            
-            vTaskDelay(pdMS_TO_TICKS(50));
-        }
+        ESP_LOGW(TAG, "Line not found after avoidance maneuver.");
+        // Optional: Could add a short forward movement here as a final fallback
     }
-    
-    motor_stop();
-    ESP_LOGI(TAG, "Curved avoidance complete, resuming line following");
+
+    motor_stop(); // Stop motors before returning to main loop
+    ESP_LOGI(TAG, "Half-square avoidance complete, resuming main loop.");
+    // Ensure servo is centered before returning
+    servo_write(90);
+    vTaskDelay(pdMS_TO_TICKS(200));
 }
+
 
 // --- Main Application ---
 void app_main(void) {
-    ESP_LOGI(TAG, "Robot Car Starting (PD Control - v15 Curved Avoidance)..."); // Updated version tag
+    ESP_LOGI(TAG, "Robot Car Starting (PD Control - Half-Square Avoidance)..."); // Updated version tag
     init_gpio(); init_pwm(); init_adc();
     if (init_i2c() != ESP_OK) { ESP_LOGE(TAG, "I2C init failed. Halting."); while(1) vTaskDelay(portMAX_DELAY); }
     if (init_mpu6050() != ESP_OK) { ESP_LOGE(TAG, "MPU6050 init failed."); }
@@ -426,9 +362,9 @@ void app_main(void) {
                      distance_F, ir_L, ir_M, ir_R, error, accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z);
         }
 
-        // --- Priority 1: Obstacle Avoidance (Curved Path) ---
+        // --- Priority 1: Obstacle Avoidance (Half-Square) ---
         if (distance_F < OBSTACLE_THRESHOLD && distance_F > 0.1) { // Added > 0.1 check to avoid false trigger on bad readings
-            avoid_obstacle(); // Call the improved curved obstacle avoidance function
+            avoid_obstacle_half_square(); // Call the half-square obstacle avoidance function
             continue; // Skip line following for this iteration
         }
 
