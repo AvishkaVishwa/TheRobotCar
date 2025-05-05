@@ -45,12 +45,10 @@
 #define MPU6050_GYRO_XOUT_H 0x43
 #define MPU6050_WHO_AM_I 0x75
 
-// --- Constants for Half-Square Obstacle Avoidance ---
-#define SQUARE_TURN_SPEED 60         // Speed for 90-degree turns (CALIBRATE!)
-#define SQUARE_TURN_DURATION_MS 750  // Duration for 90-degree turn (CALIBRATE!)
-#define SQUARE_FORWARD_DURATION_MS 1800 // Duration to move forward past obstacle (CALIBRATE! Consider robot length 20cm + margin)
-#define SQUARE_SEARCH_TURN_SPEED 45  // Slower speed for turning during search (CALIBRATE!)
-#define SQUARE_SEARCH_TIMEOUT_MS 3000 // Max time to search for line by turning
+// --- Constants for Obstacle Avoidance ---
+#define TURN_DELAY_MS 400         // Turning duration
+#define FORWARD_DELAY_MS 500      // Forward movement duration
+#define MANEUVER_SPEED 60         // Speed during obstacle avoidance maneuvers
 
 float Kp = 15.0; // Reduced Kp STARTING VALUE for re-tuning at speed 55. Adjust based on observation.
 float Kd = 7.0; // !! MUST RE-TUNE for speed 55 !!
@@ -80,10 +78,9 @@ void motor_forward(int speed);
 void motor_turn_right(int speed);
 void motor_turn_left(int speed);
 void motor_stop();
-int check_side_for_escape(); // Scan function
-// void avoid_obstacle(); // Comment out or remove old prototype
-// void avoid_obstacle_simple_turn(); // Comment out or remove old prototype
-void avoid_obstacle_half_square(); // Add new prototype
+void check_sides_for_escape(float *distance_L_out, float *distance_R_out);
+void avoid_obstacle();
+void search_for_line();
 
 // --- Initialization Functions ---
 void init_gpio() {
@@ -210,140 +207,164 @@ void motor_turn_right(int speed) { motor_control(speed, 1, speed, 0); }
 void motor_turn_left(int speed) { motor_control(speed, 0, speed, 1); }
 void motor_stop() { motor_control(0, 1, 0, 1); }
 
-
 // --- Obstacle Avoidance Logic ---
 
 // Function to scan sides and return best escape direction
-// Returns: 1 if Left is clearer, -1 if Right is clearer (or default Right)
-int check_side_for_escape() {
+void check_sides_for_escape(float *distance_L_out, float *distance_R_out) {
     ESP_LOGI(TAG, "Checking sides for escape route...");
-    motor_stop(); vTaskDelay(pdMS_TO_TICKS(100)); // Ensure stopped
+    motor_stop(); 
+    vTaskDelay(pdMS_TO_TICKS(200)); // Ensure stopped
 
-    int right_scan_angle = 160;
-    int left_scan_angle = 20;
-    int center_angle = 90;
-    float local_distance_R = 999.0;
-    float local_distance_L = 999.0;
-
-    // Scan Right
-    ESP_LOGD(TAG, "Scanning Right to %d deg...", right_scan_angle);
-    servo_write(right_scan_angle); vTaskDelay(pdMS_TO_TICKS(500));
-    local_distance_R = measure_distance();
-    ESP_LOGI(TAG, "Distance Right (at %d deg) = %.1f cm", right_scan_angle, local_distance_R);
+    // Look right
+    ESP_LOGD(TAG, "Scanning Right...");
+    servo_write(170);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    *distance_R_out = measure_distance();
+    ESP_LOGI(TAG, "Distance Right = %.1f cm", *distance_R_out);
     vTaskDelay(pdMS_TO_TICKS(100));
 
-    // Scan Left
-    ESP_LOGD(TAG, "Scanning Left to %d deg...", left_scan_angle);
-    servo_write(left_scan_angle); vTaskDelay(pdMS_TO_TICKS(600)); // Allow extra time for servo travel
-    local_distance_L = measure_distance();
-    ESP_LOGI(TAG, "Distance Left (at %d deg) = %.1f cm", left_scan_angle, local_distance_L);
+    // Look left
+    ESP_LOGD(TAG, "Scanning Left...");
+    servo_write(10);
+    vTaskDelay(pdMS_TO_TICKS(600)); // Allow extra time for servo travel
+    *distance_L_out = measure_distance();
+    ESP_LOGI(TAG, "Distance Left = %.1f cm", *distance_L_out);
     vTaskDelay(pdMS_TO_TICKS(100));
 
     // Center Servo
-    ESP_LOGD(TAG, "Centering Servo to %d deg...", center_angle);
-    servo_write(center_angle); vTaskDelay(pdMS_TO_TICKS(400));
-
-    // Decide escape direction
-    if (local_distance_L > local_distance_R) {
-        ESP_LOGI(TAG, "Escape route: Left is clearer (L:%.1f > R:%.1f)", local_distance_L, local_distance_R);
-        return 1; // Escape Left
-    } else {
-        ESP_LOGI(TAG, "Escape route: Right is clearer or equal (R:%.1f >= L:%.1f)", local_distance_R, local_distance_L);
-        return -1; // Escape Right
-    }
+    ESP_LOGD(TAG, "Centering Servo...");
+    servo_write(90); 
+    vTaskDelay(pdMS_TO_TICKS(300));
 }
 
-// Half-Square Obstacle Avoidance Implementation
-void avoid_obstacle_half_square() {
-    ESP_LOGI(TAG, "Obstacle Detected! Distance: %.1f cm. Starting half-square avoidance.", distance_F);
-    error = 0; previous_error = 0; // Reset PD error
-    motor_stop();
-    vTaskDelay(pdMS_TO_TICKS(200)); // Pause briefly
-
-    // Step 1: Scan both sides and select best direction
-    int escape_direction = check_side_for_escape(); // 1 for Left, -1 for Right
-
-    // Step 2: Turn 90 degrees away from the obstacle
-    ESP_LOGI(TAG, "Avoidance: Turning 90deg %s", escape_direction == 1 ? "Left" : "Right");
-    if (escape_direction == 1) { // Turn Left
-        motor_turn_left(SQUARE_TURN_SPEED);
-    } else { // Turn Right
-        motor_turn_right(SQUARE_TURN_SPEED);
-    }
-    vTaskDelay(pdMS_TO_TICKS(SQUARE_TURN_DURATION_MS)); // Turn for calibrated duration
+// Arduino-style obstacle avoidance implementation
+void avoid_obstacle() {
+    ESP_LOGI(TAG, "Obstacle Detected! Distance: %.1f cm. Starting avoidance.", distance_F);
+    error = 0; 
+    previous_error = 0; // Reset PD error
     motor_stop();
     vTaskDelay(pdMS_TO_TICKS(100));
-
-    // Step 3: Move forward to clear the obstacle's side
-    ESP_LOGI(TAG, "Avoidance: Moving forward past obstacle");
-    motor_forward(MOTOR_BASE_SPEED);
-    vTaskDelay(pdMS_TO_TICKS(SQUARE_FORWARD_DURATION_MS)); // Move forward for calibrated duration
+    
+    // Check sides
+    float local_distance_L, local_distance_R;
+    check_sides_for_escape(&local_distance_L, &local_distance_R);
+    
+    // Compare distances and execute avoidance maneuver
+    if (local_distance_L > local_distance_R && local_distance_L > OBSTACLE_THRESHOLD) {
+        // More space to the left
+        ESP_LOGI(TAG, "Navigating around obstacle via left");
+        
+        // Turn left
+        motor_turn_left(MANEUVER_SPEED);
+        vTaskDelay(pdMS_TO_TICKS(TURN_DELAY_MS));
+        
+        // Forward
+        motor_forward(MANEUVER_SPEED);
+        vTaskDelay(pdMS_TO_TICKS(FORWARD_DELAY_MS));
+        
+        // Turn right
+        motor_turn_right(MANEUVER_SPEED);
+        vTaskDelay(pdMS_TO_TICKS(TURN_DELAY_MS));
+        
+        // Forward
+        motor_forward(MANEUVER_SPEED);
+        vTaskDelay(pdMS_TO_TICKS(FORWARD_DELAY_MS + 100)); // Slightly longer
+        
+        // Turn right again
+        motor_turn_right(MANEUVER_SPEED);
+        vTaskDelay(pdMS_TO_TICKS(TURN_DELAY_MS));
+        
+        // Forward
+        motor_forward(MANEUVER_SPEED);
+        vTaskDelay(pdMS_TO_TICKS(FORWARD_DELAY_MS));
+        
+        // Final turn left to realign
+        motor_turn_left(MANEUVER_SPEED);
+        vTaskDelay(pdMS_TO_TICKS(TURN_DELAY_MS - 100)); // Slightly shorter
+    } 
+    else if (local_distance_R >= local_distance_L && local_distance_R > OBSTACLE_THRESHOLD) {
+        // More space to the right
+        ESP_LOGI(TAG, "Navigating around obstacle via right");
+        
+        // Turn right
+        motor_turn_right(MANEUVER_SPEED);
+        vTaskDelay(pdMS_TO_TICKS(TURN_DELAY_MS));
+        
+        // Forward
+        motor_forward(MANEUVER_SPEED);
+        vTaskDelay(pdMS_TO_TICKS(FORWARD_DELAY_MS));
+        
+        // Turn left
+        motor_turn_left(MANEUVER_SPEED);
+        vTaskDelay(pdMS_TO_TICKS(TURN_DELAY_MS));
+        
+        // Forward
+        motor_forward(MANEUVER_SPEED);
+        vTaskDelay(pdMS_TO_TICKS(FORWARD_DELAY_MS + 100)); // Slightly longer
+        
+        // Turn left again
+        motor_turn_left(MANEUVER_SPEED);
+        vTaskDelay(pdMS_TO_TICKS(TURN_DELAY_MS));
+        
+        // Forward
+        motor_forward(MANEUVER_SPEED);
+        vTaskDelay(pdMS_TO_TICKS(FORWARD_DELAY_MS));
+        
+        // Final turn right to realign
+        motor_turn_right(MANEUVER_SPEED);
+        vTaskDelay(pdMS_TO_TICKS(TURN_DELAY_MS - 100)); // Slightly shorter
+    }
+    else {
+        // Not enough space either way, back up and turn around
+        ESP_LOGW(TAG, "Not enough space in either direction. Turning around.");
+        motor_control(MANEUVER_SPEED, 0, MANEUVER_SPEED, 0); // Backward
+        vTaskDelay(pdMS_TO_TICKS(800));
+        motor_turn_left(MANEUVER_SPEED);
+        vTaskDelay(pdMS_TO_TICKS(1400));  // 180 degree turn
+    }
+    
+    // Stop motors and prepare to resume line following
     motor_stop();
-    vTaskDelay(pdMS_TO_TICKS(100));
-
-    // Step 4: Turn 90 degrees back towards the original path direction
-    ESP_LOGI(TAG, "Avoidance: Turning 90deg back (%s)", escape_direction == 1 ? "Right" : "Left");
-    if (escape_direction == 1) { // Turn Right (opposite of initial turn)
-        motor_turn_right(SQUARE_TURN_SPEED);
-    } else { // Turn Left (opposite of initial turn)
-        motor_turn_left(SQUARE_TURN_SPEED);
-    }
-    vTaskDelay(pdMS_TO_TICKS(SQUARE_TURN_DURATION_MS)); // Turn for calibrated duration
-    motor_stop();
-    vTaskDelay(pdMS_TO_TICKS(100));
-
-    // Step 5: Turn towards the expected line direction and search
-    ESP_LOGI(TAG, "Avoidance: Turning towards line (%s) and searching", escape_direction == 1 ? "Right" : "Left");
-    if (escape_direction == 1) { // Line should be to the Right, so turn Right
-        motor_turn_right(SQUARE_SEARCH_TURN_SPEED);
-    } else { // Line should be to the Left, so turn Left
-        motor_turn_left(SQUARE_SEARCH_TURN_SPEED);
-    }
-
-    int64_t search_start_time = esp_timer_get_time();
-    bool line_found = false;
-
-    while (esp_timer_get_time() - search_start_time < SQUARE_SEARCH_TIMEOUT_MS * 1000) {
-        int ir_L = read_ir_sensor(LEFT_IR_CHANNEL);
-        int ir_M = read_ir_sensor(MIDDLE_IR_CHANNEL);
-        int ir_R = read_ir_sensor(RIGHT_IR_CHANNEL);
-
-        // If any sensor detects the line, stop searching
-        if (ir_L == 1 || ir_M == 1 || ir_R == 1) {
-            ESP_LOGI(TAG, "Line found during search turn! IR: %d%d%d", ir_L, ir_M, ir_R);
-            line_found = true;
-            break;
-        }
-
-        // Optional: Check for new obstacles while searching
-        // Centering servo temporarily to check front
-        servo_write(90);
-        vTaskDelay(pdMS_TO_TICKS(50)); // Allow servo to move slightly
-        float current_distance = measure_distance();
-        if (current_distance < OBSTACLE_THRESHOLD && current_distance > 0.1) {
-             ESP_LOGW(TAG, "New obstacle detected during line search: %.1f cm. Stopping search.", current_distance);
-             break; // Exit search, main loop will handle the new obstacle
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(50)); // Small delay during search turn
-    }
-
-    if (!line_found) {
-        ESP_LOGW(TAG, "Line not found after avoidance maneuver.");
-        // Optional: Could add a short forward movement here as a final fallback
-    }
-
-    motor_stop(); // Stop motors before returning to main loop
-    ESP_LOGI(TAG, "Half-square avoidance complete, resuming main loop.");
+    vTaskDelay(pdMS_TO_TICKS(200));
+    ESP_LOGI(TAG, "Obstacle avoidance complete, resuming main loop.");
+    
     // Ensure servo is centered before returning
     servo_write(90);
     vTaskDelay(pdMS_TO_TICKS(200));
 }
 
+// Function to search for line if lost during obstacle avoidance
+void search_for_line() {
+    ESP_LOGI(TAG, "Searching for line...");
+    static int search_direction = 1;  // 1 = right, -1 = left
+    static int search_steps = 0;
+    
+    // Switch search direction after several steps
+    if (search_steps > 20) {
+        search_direction *= -1;
+        search_steps = 0;
+    }
+    
+    if (search_direction > 0) {
+        // Search right
+        motor_turn_right(45);
+        vTaskDelay(pdMS_TO_TICKS(100));
+        motor_stop();
+        vTaskDelay(pdMS_TO_TICKS(50));
+    } else {
+        // Search left
+        motor_turn_left(45);
+        vTaskDelay(pdMS_TO_TICKS(100));
+        motor_stop();
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    
+    search_steps++;
+}
 
 // --- Main Application ---
 void app_main(void) {
-    ESP_LOGI(TAG, "Robot Car Starting (PD Control - Half-Square Avoidance)..."); // Updated version tag
+    ESP_LOGI(TAG, "Robot Car Starting (PD Control - Arduino-Style Avoidance)..."); // Updated version tag
     init_gpio(); init_pwm(); init_adc();
     if (init_i2c() != ESP_OK) { ESP_LOGE(TAG, "I2C init failed. Halting."); while(1) vTaskDelay(portMAX_DELAY); }
     if (init_mpu6050() != ESP_OK) { ESP_LOGE(TAG, "MPU6050 init failed."); }
@@ -362,9 +383,9 @@ void app_main(void) {
                      distance_F, ir_L, ir_M, ir_R, error, accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z);
         }
 
-        // --- Priority 1: Obstacle Avoidance (Half-Square) ---
+        // --- Priority 1: Obstacle Avoidance (Arduino-style) ---
         if (distance_F < OBSTACLE_THRESHOLD && distance_F > 0.1) { // Added > 0.1 check to avoid false trigger on bad readings
-            avoid_obstacle_half_square(); // Call the half-square obstacle avoidance function
+            avoid_obstacle(); // Using the Arduino-style obstacle avoidance function
             continue; // Skip line following for this iteration
         }
 
@@ -382,7 +403,8 @@ void app_main(void) {
         } else { line_lost = true; error = previous_error; ESP_LOGW(TAG, "Ambiguous IR (%d%d%d)! Using previous error: %d", ir_L, ir_M, ir_R, error); }
 
         if (line_lost && error == 0) {
-             motor_stop(); ESP_LOGW(TAG, "Line Lost and Previous Error 0 - Stopping.");
+            ESP_LOGW(TAG, "Line Lost and Previous Error 0 - Searching for line");
+            search_for_line(); // Use our new search function instead of stopping
         } else {
             int p_term = Kp * error; int d_term = Kd * (error - previous_error);
             int correction = p_term + d_term;
