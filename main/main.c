@@ -78,6 +78,7 @@ void motor_forward(int speed);
 void motor_turn_right(int speed);
 void motor_turn_left(int speed);
 void motor_stop();
+void motor_reverse(int speed);
 void check_sides_for_escape(float *distance_L_out, float *distance_R_out);
 void avoid_obstacle();
 void search_for_line();
@@ -206,7 +207,7 @@ void motor_forward(int speed) { motor_control(speed, 1, speed, 1); }
 void motor_turn_right(int speed) { motor_control(speed, 1, speed, 0); }
 void motor_turn_left(int speed) { motor_control(speed, 0, speed, 1); }
 void motor_stop() { motor_control(0, 1, 0, 1); }
-
+void motor_reverse(int speed) { motor_control(speed, 0, speed, 0); }
 // --- Obstacle Avoidance Logic ---
 
 // Function to scan sides and return best escape direction
